@@ -1,0 +1,48 @@
+{
+  "name": "pi-vision-proxy",
+  "version": "0.1.0",
+  "description": "Generic vision proxy extension for pi: lets non-multimodal models (e.g. DeepSeek) delegate image analysis to ANY OpenAI-compatible multimodal model. Zero vendor hardcoding - configure baseUrl + apiKey + model via /vision panel, subcommands, or config file.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "vision",
+    "multimodal",
+    "image-analysis",
+    "describe-image"
+  ],
+  "license": "MIT",
+  "author": "lawrence",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./extensions/index.ts"
+    }
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^26.1.2",
+    "typebox": "*",
+    "typescript": "^5.6.0"
+  }
+}
