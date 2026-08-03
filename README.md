@@ -1,94 +1,101 @@
+<div align="center">
+
 # pi-vlm-proxy
 
-> 通用视觉代理扩展 —— 让**非多模态模型**（DeepSeek、纯文本 LLM 等）通过 `describe_image` 工具，把图片识别委托给**任意 OpenAI 兼容的多模态模型**。
+**让不认识图片的模型，也能看懂图片**
 
-## 特性
+给 [pi](https://pi.dev) 用的视觉代理扩展 —— 把图片识别委托给任意 OpenAI 兼容的多模态模型
 
-- 🔌 **零厂商硬编码**：不内置任何厂商，配一个模型只需 **API 地址 + API Key + 模型 ID** 三样
-- 🌐 **兼容所有 OpenAI 格式端点**：火山 Ark、阶跃 StepFun、OpenAI、通义 Qwen-VL、智谱 GLM、Gemini（OpenAI 兼容层）、OpenRouter、硅基流动、本地 vLLM / Ollama / llama.cpp……
-- 🧠 **能力感知透传**：主模型是多模态（如 Qwen-VL）时图片**原生直发主模型**、自动隐藏 `describe_image`，零额外 API 调用；主模型 text-only（如 DeepSeek）时自动启用代理——无需任何手动操作，切换模型即自动同步
-- 🎛️ **命令只有 5 个**：`list` / `add` / `edit` / `remove` / `use`，或直接 `/vision` 开面板
-- 🔑 **API Key 安全**：支持 `$ENV_NAME` 引用环境变量，配置文件中不落明文
-- 🖼️ **两种传图方式**：本地文件路径 `path` / base64 `data`（兼容粘贴截图）
+[![npm](https://img.shields.io/npm/v/pi-vlm-proxy?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/pi-vlm-proxy)
+[![license](https://img.shields.io/npm/l/pi-vlm-proxy?color=3da639)](./LICENSE)
+[![node](https://img.shields.io/node/v/pi-vlm-proxy?color=5fa04e&logo=node.js&logoColor=white)](https://nodejs.org)
+[![tests](https://img.shields.io/badge/tests-61%20passing-3da639)](#开发)
 
-## 安装
+<img src="https://raw.githubusercontent.com/lawrencewzen/pi-vlm-proxy/main/assets/preview.png" alt="pi-vlm-proxy 演示：DeepSeek 通过 describe_image 委托豆包识图" width="880">
 
-### 方式一：本地目录（开发/自用）
+<sub>主模型 <code>deepseek-v4-flash</code> 不支持视觉，图片识别被自动委托给 <code>doubao-seed-2-1-turbo</code></sub>
 
-在 `~/.pi/agent/settings.json` 中注册：
+</div>
 
-```json
-{
-  "extensions": ["/path/to/pi-vlm-proxy"]
-}
+---
+
+## 这是什么
+
+DeepSeek 这类模型很强，但看不见图片。你丢一张截图过去，它只能干瞪眼。
+
+本扩展给它加一个 `describe_image` 工具：图片先送到你指定的多模态模型那里转成文字，再交回主模型继续对话。**你不必为了看一张图就切换主模型。**
+
+```mermaid
+flowchart LR
+    A["🖼️ 丢一张图"] --> B{"主模型<br/>支持视觉？"}
+    B -->|"支持"| C["图片原生直发主模型<br/>自动隐藏工具 · 零额外开销"]
+    B -->|"不支持"| D["调用 describe_image"]
+    D --> E["转发给你配置的 VLM"]
+    E --> F["📝 返回文字描述"]
+    F --> G["主模型据此继续对话"]
 ```
 
-然后 `/reload` 或重启 pi 生效。
+关键在于**它会自己判断该不该出场**：主模型本身支持视觉时，扩展自动隐藏工具、让图片原生透传，不产生任何额外 API 调用。切换模型时自动同步，你不需要手动开关。
 
-### 方式二：Git / npm（发布后）
+## 快速开始
 
 ```bash
 pi install npm:pi-vlm-proxy
-# 或
-pi install git:github.com/lawrencewzen/pi-vlm-proxy
 ```
 
-## 配置
+装好后在 pi 里跑 `/vision add`，依次填四样东西：
 
-配置文件：`~/.pi/agent/vision-config.json`
+```
+模型名称:   doubao                                      ← 自己起的代号
+API 地址:   https://ark.cn-beijing.volces.com/api/v3    ← 自动补 /chat/completions
+API Key:    $ARK_API_KEY                                ← 支持环境变量引用
+模型 ID:    doubao-seed-2-1-turbo-260628
+```
+
+完事。之后主模型遇到图片会自动调用，无需任何额外操作。
+
+<details>
+<summary>其它安装方式</summary>
+
+```bash
+# 从 GitHub 装（可指定版本）
+pi install git:github.com/lawrencewzen/pi-vlm-proxy@v0.1.1
+
+# 临时试用，只对本次运行生效，退出即消失
+pi -e npm:pi-vlm-proxy
+```
+
+本地开发则在 `~/.pi/agent/settings.json` 里注册目录，改完 `/reload` 生效：
 
 ```json
-{
-  "current": "my-vision",
-  "passthrough": "auto",
-  "providers": {
-    "my-vision": {
-      "baseUrl": "https://api.example.com/v1",
-      "apiKey": "$MY_VISION_KEY",
-      "model": "vision-model-id",
-      "headers": { "x-custom": "value" },
-      "maxTokens": 4096
-    }
-  }
-}
+{ "extensions": ["/path/to/pi-vlm-proxy"] }
 ```
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `current` | 否 | 当前使用的模型名（不填则用第一个） |
-| `passthrough` | 否 | 透传模式，默认 `auto`。**无命令入口，只能手改本文件**（见下） |
-| `providers.<name>.baseUrl` | ✅ | OpenAI 兼容地址，自动补 `/chat/completions` |
-| `providers.<name>.apiKey` | 否 | 明文或 `$ENV_NAME`（默认 `Authorization: Bearer`） |
-| `providers.<name>.model` | ✅ | 模型 ID |
-| `providers.<name>.headers` | 否 | 额外请求头。**只有同名的 `Authorization` 才会覆盖默认 Bearer**，配其它头不影响鉴权 |
-| `providers.<name>.maxTokens` | 否 | 输出上限，默认 4096 |
+</details>
 
-### 透传模式（passthrough）
+## 特性
 
-| 值 | 行为 |
-|----|------|
-| `auto`（默认） | 主模型 `input` 含 `"image"` → 图片原生透传、隐藏 `describe_image`；text-only → 启用代理 |
-| `on` | 强制透传，始终隐藏 `describe_image` |
-| `off` | 强制代理，始终启用 `describe_image` |
-
-模式在**模型切换时自动同步**（`/model`、`Ctrl+P`、会话恢复），切换即生效并提示。多模态主模型下粘贴/拖拽的图片由 pi 原生发给模型，完全不影响正常使用。
-
-`auto` 覆盖绝大多数情况，所以**没有对应的子命令**。留这个字段是给 `auto` 判断失灵时的逃生阀（主模型元数据没标 `image`，或标了却调不通），手改配置文件即可强制。
+|  |  |
+|---|---|
+| 🔌 **零厂商硬编码** | 不内置任何厂商。一个模型 = API 地址 + Key + 模型 ID，三样而已 |
+| 🌐 **通吃 OpenAI 格式** | 火山 Ark、阶跃 StepFun、OpenAI、通义 Qwen-VL、智谱 GLM、OpenRouter、硅基流动、本地 vLLM / Ollama / llama.cpp…… |
+| 🧠 **能力感知** | 主模型支持视觉就自动隐藏自己，走原生透传；text-only 才启用代理。切换模型即同步 |
+| 🔑 **密钥不落明文** | `$ENV_NAME` 引用环境变量；配置文件权限固定 `600`，展示时自动脱敏 |
+| 🎛️ **五个命令** | `list` / `add` / `edit` / `remove` / `use`，或直接 `/vision` 开面板 |
+| 🖼️ **两种传图** | 本地路径 `path` 或 base64 `data`（兼容粘贴的截图） |
 
 ## 命令
 
 | 命令 | 说明 |
 |------|------|
-| `/vision` | 打开面板：顶部铺出全部模型 + 当前状态，下方是操作菜单 |
+| `/vision` | 打开面板：铺出全部模型 + 当前状态 + 操作菜单 |
 | `/vision list` | 列出所有已配置模型 |
-| `/vision add` | 添加模型（名称 → API 地址 → API Key → 模型 ID） |
-| `/vision edit [name]` | 编辑已有模型（逐字段提示当前值：**留空 = 不变**，apiKey 输入 `-` = 清除） |
+| `/vision add` | 添加模型（名称 → 地址 → Key → 模型 ID） |
+| `/vision edit [name]` | 编辑模型（逐字段显示当前值，**留空 = 不变**，Key 输入 `-` = 清除） |
 | `/vision remove [name]` | 删除模型（有确认） |
-| `/vision use [name]` | 切换当前视觉模型（无参数弹出选择列表） |
+| `/vision use [name]` | 切换当前视觉模型 |
 
-`edit` / `remove` / `use` 的 `[name]` 可省略，省略时弹出选择列表；带参数时支持 Tab 补全。
-
-面板长这样：
+`[name]` 可省略 —— 省略时弹出选择列表，带参数时支持 Tab 补全。
 
 ```
 Vision 设置面板
@@ -96,7 +103,7 @@ Vision 设置面板
 
 📋 视觉模型 (2):
   ● doubao  (doubao-seed-2-1-turbo-260628 @ https://ark.cn-beijing.volces.com/api/v3)
-    stepfun (step-3.7-flash @ https://api.stepfun.com/v1)
+    stepfun (step-3.7-flash @ https://api.stepfun.ai/v1)
 
   1. 切换当前模型 (use)
   2. 添加模型 (add)
@@ -105,21 +112,9 @@ Vision 设置面板
   0. 退出
 ```
 
-## LLM 使用（describe_image 工具）
+## 配置
 
-主模型（如 DeepSeek）看到图片时会自动调用：
-
-```
-describe_image(path: "/path/to/screenshot.png")
-describe_image(data: "data:image/png;base64,....", mimeType: "image/png")
-```
-
-- **粘贴截图**：pi 会把剪贴板图片写入 `/tmp/pi-clipboard-*.png` 并自动插入路径文本，主模型会拿着路径调用工具
-- **磁盘图片**：直接告诉主模型图片路径即可
-
-## 个人配置示例（非包内代码）
-
-你的个人模型配置只存在于 `vision-config.json`，包本身不包含任何厂商信息：
+配置存在 `~/.pi/agent/vision-config.json`，包本身不含任何厂商信息。
 
 ```json
 {
@@ -139,38 +134,70 @@ describe_image(data: "data:image/png;base64,....", mimeType: "image/png")
 }
 ```
 
-### ⚠️ 别把「视觉生成」模型配进来
+| 字段 | 必填 | 说明 |
+|------|:---:|------|
+| `current` | | 当前使用的模型名，不填则用第一个 |
+| `passthrough` | | 透传模式，默认 `auto`（见下）。无命令入口，手改本文件 |
+| `providers.<name>.baseUrl` | ✅ | OpenAI 兼容地址，自动补 `/chat/completions` |
+| `providers.<name>.model` | ✅ | 模型 ID |
+| `providers.<name>.apiKey` | | 明文或 `$ENV_NAME`，默认以 `Authorization: Bearer` 发送 |
+| `providers.<name>.headers` | | 额外请求头。只有同名 `Authorization` 才覆盖默认 Bearer，配其它头不影响鉴权 |
+| `providers.<name>.maxTokens` | | 输出上限，默认 4096 |
 
-厂商说的「视觉」经常指视觉**生成**，而本扩展要的是视觉**理解**：
+> [!TIP]
+> `apiKey` 推荐写成 `$VOLC_ARK_KEY` 这种形式，真值放进 shell 的 `export`。这样截图、贴配置、录屏时露出来的只是个变量名。
 
-| | 用途 | 例子 | 能用吗 |
-|---|---|---|---|
-| 视觉理解（VLM） | 传图 → 出文字 | `doubao-*-vision`、`qwen-vl-*`、`glm-4.5v`、`gpt-4o` | ✅ 就要这个 |
-| 视觉生成 | 文字 → 出图/视频 | Seedream（文生图）、Seedance（文生视频）、DALL·E、Flux | ❌ 调不通 |
+### 透传模式
 
-**火山引擎尤其容易踩**：控制台「视觉」tab 里列的全是 Seedream / Seedance，
-识图模型反而在**「语言」tab** 下（多模态理解归在语言模型里）。
+| 值 | 行为 |
+|----|------|
+| `auto`（默认） | 主模型 `input` 含 `"image"` → 原生透传、隐藏工具；否则启用代理 |
+| `on` | 强制透传，始终隐藏 `describe_image` |
+| `off` | 强制代理，始终启用 `describe_image` |
+
+模式在模型切换时自动同步（`/model`、`Ctrl+P`、会话恢复），切换即生效并提示。
+
+`auto` 覆盖绝大多数情况，所以没做子命令。留这个字段是给 `auto` 判断失灵时的逃生阀 —— 主模型元数据没标 `image`、或标了却调不通，手改配置即可强制。
+
+## 工具用法
+
+主模型看到图片时自动调用，两种传参方式：
+
+```js
+describe_image(path: "/path/to/screenshot.png")
+describe_image(data: "data:image/png;base64,...", mimeType: "image/png")
+```
+
+- **粘贴的截图** —— pi 会写入 `/tmp/pi-clipboard-*.png` 并插入路径文本，主模型拿着路径调用
+- **磁盘上的图** —— 直接把路径告诉主模型即可
 
 ## 开发
 
 ```bash
-# 类型检查
-npm run typecheck
-# 单元测试（61 项，用本地假端点 + 隔离的 HOME，不发真实请求、不碰真实配置）
-npm test
-# 在 pi 里加载本地扩展试用
-pi -e ./extensions/index.ts
+npm run typecheck            # 类型检查
+npm test                     # 61 项单元测试
+pi -e ./extensions/index.ts  # 在 pi 里加载本地扩展试用
 ```
 
-测试分三块：`test/config.test.ts`（读写、脱敏、原子写）、`test/vision.test.ts`（鉴权头、
-超时、响应形态、体积上限、类型嗅探）、`test/commands.test.ts`（用假 `ExtensionAPI` 驱动真实
-`/vision` 命令与 `describe_image` 工具）。`test/test-image.ts` 是生成测试用 PNG 的夹具，不参与打包。
+测试跑在**隔离的临时 HOME + 本地假 HTTP 端点**上，不发真实请求、不触碰真实配置：
 
-### 若干行为约定
+- `test/config.test.ts` —— 读写、校验、脱敏、原子写、损坏恢复
+- `test/vision.test.ts` —— 鉴权头、超时、响应形态、体积上限、类型嗅探
+- `test/commands.test.ts` —— 用假 `ExtensionAPI` 驱动真实 `/vision` 命令与 `describe_image` 工具
 
-- **鉴权**：`headers` 里没有 `Authorization`（大小写不敏感）时才自动补 `Bearer <apiKey>`
-- **超时**：单次请求 120s 兜底；主动取消不算失败，工具返回普通结果而非错误
-- **体积**：图片上限 10MB，超限在本地就拒绝，不会发出去换一个看不懂的 413
-- **截断**：响应 `finish_reason` 为 `length` 时会在结果末尾提示调大 `maxTokens`
-- **配置**：写入走「临时文件 + rename」，权限固定 `600`；原文件损坏时先备份为 `.bak`
-- **兼容**：请求体用 `max_tokens`。要求 `max_completion_tokens` 的新版 OpenAI 端点暂不支持
+<details>
+<summary>若干行为约定</summary>
+
+- **鉴权** —— `headers` 里没有 `Authorization`（大小写不敏感）时才自动补 `Bearer <apiKey>`
+- **超时** —— 单次请求 120s 兜底；主动取消不算失败，工具返回普通结果而非错误
+- **体积** —— 图片上限 10MB，超限在本地就拒绝，不会发出去换一个看不懂的 413
+- **类型** —— 按文件头嗅探真实格式，`.png` 里装着 JPEG 也能正确发送
+- **截断** —— 响应 `finish_reason` 为 `length` 时，在结果末尾提示调大 `maxTokens`
+- **配置** —— 写入走「临时文件 + rename」原子替换，权限固定 `600`；原文件损坏时先备份为 `.bak`
+- **兼容** —— 请求体用 `max_tokens`；要求 `max_completion_tokens` 的新版 OpenAI 端点暂不支持
+
+</details>
+
+## License
+
+[MIT](./LICENSE) © lawrence
