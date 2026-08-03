@@ -30,7 +30,7 @@
 ```bash
 pi install npm:pi-vision-proxy
 # 或
-pi install git:github.com/yourname/pi-vision-proxy
+pi install git:github.com/lawrence/pi-vision-proxy
 ```
 
 ## 配置
@@ -138,6 +138,18 @@ describe_image(data: "data:image/png;base64,....", mimeType: "image/png")
   }
 }
 ```
+
+### ⚠️ 别把「视觉生成」模型配进来
+
+厂商说的「视觉」经常指视觉**生成**，而本扩展要的是视觉**理解**：
+
+| | 用途 | 例子 | 能用吗 |
+|---|---|---|---|
+| 视觉理解（VLM） | 传图 → 出文字 | `doubao-*-vision`、`qwen-vl-*`、`glm-4.5v`、`gpt-4o` | ✅ 就要这个 |
+| 视觉生成 | 文字 → 出图/视频 | Seedream（文生图）、Seedance（文生视频）、DALL·E、Flux | ❌ 调不通 |
+
+**火山引擎尤其容易踩**：控制台「视觉」tab 里列的全是 Seedream / Seedance，
+识图模型反而在**「语言」tab** 下（多模态理解归在语言模型里）。
 
 ## 开发
 
