@@ -1,4 +1,4 @@
-# pi-vision-proxy
+# pi-vlm-proxy
 
 > 通用视觉代理扩展 —— 让**非多模态模型**（DeepSeek、纯文本 LLM 等）通过 `describe_image` 工具，把图片识别委托给**任意 OpenAI 兼容的多模态模型**。
 
@@ -19,7 +19,7 @@
 
 ```json
 {
-  "extensions": ["/path/to/pi-vision-proxy"]
+  "extensions": ["/path/to/pi-vlm-proxy"]
 }
 ```
 
@@ -28,9 +28,9 @@
 ### 方式二：Git / npm（发布后）
 
 ```bash
-pi install npm:pi-vision-proxy
+pi install npm:pi-vlm-proxy
 # 或
-pi install git:github.com/lawrence/pi-vision-proxy
+pi install git:github.com/lawrencewzen/pi-vlm-proxy
 ```
 
 ## 配置

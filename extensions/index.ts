@@ -1,5 +1,5 @@
 /**
- * pi-vision-proxy —— 通用视觉代理扩展
+ * pi-vlm-proxy —— 通用视觉代理扩展
  *
  * 让非多模态模型（DeepSeek 等）通过 describe_image 工具，把图片识别
  * 委托给任意 OpenAI 兼容的多模态模型。零厂商硬编码，全部由用户配置。

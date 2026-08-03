@@ -1,5 +1,5 @@
 {
-  "name": "pi-vision-proxy",
+  "name": "pi-vlm-proxy",
   "version": "0.1.0",
   "description": "Generic vision proxy extension for pi: lets non-multimodal models (e.g. DeepSeek) delegate image analysis to ANY OpenAI-compatible multimodal model. Zero vendor hardcoding - a model is just baseUrl + apiKey + model id. Auto-hides itself when the main model already supports images.",
   "keywords": [
@@ -16,11 +16,11 @@
   "author": "lawrence",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lawrence/pi-vision-proxy.git"
+    "url": "git+https://github.com/lawrencewzen/pi-vlm-proxy.git"
   },
-  "homepage": "https://github.com/lawrence/pi-vision-proxy#readme",
+  "homepage": "https://github.com/lawrencewzen/pi-vlm-proxy#readme",
   "bugs": {
-    "url": "https://github.com/lawrence/pi-vision-proxy/issues"
+    "url": "https://github.com/lawrencewzen/pi-vlm-proxy/issues"
   },
   "type": "module",
   "exports": {
