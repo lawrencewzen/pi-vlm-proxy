@@ -1,6 +1,6 @@
 {
   "name": "pi-vlm-proxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generic vision proxy extension for pi: lets non-multimodal models (e.g. DeepSeek) delegate image analysis to ANY OpenAI-compatible multimodal model. Zero vendor hardcoding - a model is just baseUrl + apiKey + model id. Auto-hides itself when the main model already supports images.",
   "keywords": [
     "pi-package",
@@ -34,7 +34,8 @@
   "pi": {
     "extensions": [
       "./extensions/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/lawrencewzen/pi-vlm-proxy/main/assets/preview.png"
   },
   "files": [
     "extensions",
