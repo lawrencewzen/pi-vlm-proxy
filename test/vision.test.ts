@@ -21,7 +21,7 @@ const {
   VisionAbortError,
   MAX_IMAGE_BYTES,
 } = await import("../src/vision.ts");
-const { generateTestPngBase64 } = await import("../src/test-image.ts");
+const { generateTestPngBase64 } = await import("./test-image.ts");
 
 type Mode = "string" | "array" | "reasoning" | "empty" | "truncated" | "error500" | "hang";
 let mode: Mode = "string";

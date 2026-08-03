@@ -47,10 +47,13 @@ function makeCtx(opts: { inputs?: (string | undefined)[]; selects?: (string | un
   const selects = [...(opts.selects ?? [])];
   const notices: string[] = [];
   const confirms: string[] = [];
+  // 面板把模型列表铺在 select 标题里，断言得看得见它
+  const selectTitles: string[] = [];
   let inputCount = 0;
   return {
     notices,
     confirms,
+    selectTitles,
     inputCount: () => inputCount,
     ctx: {
       model: { id: "deepseek-chat", input: ["text"] },
@@ -60,7 +63,10 @@ function makeCtx(opts: { inputs?: (string | undefined)[]; selects?: (string | un
           inputCount++;
           return inputs.shift();
         },
-        select: async () => selects.shift(),
+        select: async (title: string) => {
+          selectTitles.push(title);
+          return selects.shift();
+        },
         editor: async () => undefined,
         confirm: async (title: string, msg: string) => {
           confirms.push(`${title}: ${msg}`);
@@ -191,29 +197,44 @@ test("remove 需确认；删掉 current 后 current 被清空", async () => {
   assert.equal(cfg.current, undefined);
 });
 
-// ---------------- show / 健壮性 ----------------
+// ---------------- 面板 / 健壮性 ----------------
 
-test("show 不打印明文 apiKey", async () => {
-  const t = makeCtx();
-  await handler("show", t.ctx);
-  const all = t.notices.join("\n");
-  assert.ok(!all.includes("sk-old-secret-value"), "泄露了明文 apiKey");
-  assert.match(all, /sk-o…alue/);
+test("列表与面板都不打印明文 apiKey", async () => {
+  for (const cmd of ["list", ""]) {
+    const t = makeCtx();
+    await handler(cmd, t.ctx);
+    // 面板的列表在 select 标题里，notify 只剩告警；两条路径都不该出现密钥
+    const all = [...t.notices, ...t.selectTitles].join("\n");
+    assert.ok(!all.includes("sk-old-secret-value"), `「/vision ${cmd}」泄露了明文 apiKey`);
+  }
 });
 
-test("未知子命令给出提示", async () => {
-  const t = makeCtx();
-  await handler("nonsense", t.ctx);
-  assert.ok(t.notices.some((n) => n.includes("未知子命令")));
+test("面板标题直接铺出模型列表，当前项有标记", async () => {
+  const t = makeCtx({ selects: [undefined] });
+  await handler("", t.ctx);
+  const title = t.selectTitles[0] ?? "";
+  assert.match(title, /● doubao/);
+  assert.match(title, /other/);
+  assert.match(title, /old-m @ https:\/\/old\/v1/);
 });
 
-test("passthrough 写入配置并拒绝非法值", async () => {
-  await handler("passthrough on", makeCtx().ctx);
-  assert.equal(read().passthrough, "on");
-  const t = makeCtx();
-  await handler("passthrough sometimes", t.ctx);
-  assert.ok(t.notices.some((n) => n.includes("无效模式")));
-  assert.equal(read().passthrough, "on");
+test("未知子命令给出提示，且已删掉的子命令不再被识别", async () => {
+  for (const gone of ["nonsense", "show", "config", "test", "passthrough"]) {
+    const t = makeCtx();
+    await handler(gone, t.ctx);
+    assert.ok(
+      t.notices.some((n) => n.includes("未知子命令")),
+      `「${gone}」没被当成未知子命令`
+    );
+  }
+});
+
+test("passthrough 字段没有命令入口，但手改文件仍然生效", async () => {
+  // 逃生阀：auto 判断失灵时用户改文件强制，扩展必须照做
+  writeFileSync(CONFIG, JSON.stringify({ passthrough: "off", providers: {} }));
+  activeTools = [];
+  events.model_select!({ model: { id: "gpt-4o", input: ["text", "image"] } }, { ui: { notify: () => {} } });
+  assert.ok(activeTools.includes("describe_image"), "手改的 passthrough=off 被忽略了");
 });
 
 test("畸形配置不会把命令打崩", async () => {
@@ -225,7 +246,7 @@ test("畸形配置不会把命令打崩", async () => {
     '{"current":"a","providers":{"a":{"baseUrl":"","model":""}}}',
   ]) {
     writeFileSync(CONFIG, bad);
-    for (const cmd of ["list", "show", "use x", "test x", "nonsense"]) {
+    for (const cmd of ["list", "", "use x", "edit x", "remove x", "nonsense"]) {
       await assert.doesNotReject(() => handler(cmd, makeCtx().ctx), `「${cmd}」在配置 ${bad} 下崩了`);
     }
   }
@@ -238,7 +259,10 @@ test("补全：第一段补子命令", () => {
     completions("us").map((i: any) => i.value),
     ["use"],
   );
-  assert.ok(completions("").length >= 9);
+  assert.deepEqual(
+    completions("").map((i: any) => i.value),
+    ["list", "add", "edit", "remove", "use"],
+  );
   assert.equal(completions("zzz"), null);
 });
 
@@ -256,13 +280,10 @@ test("补全：第二段补模型名，且 value 是完整参数串", () => {
   );
 });
 
-test("补全：passthrough 补模式，不接名字的子命令不补", () => {
-  assert.deepEqual(
-    completions("passthrough o").map((i: any) => i.value),
-    ["passthrough on", "passthrough off"],
-  );
+test("补全：不接名字的子命令不补第二段", () => {
   assert.equal(completions("list "), null);
-  assert.equal(completions("show x"), null);
+  assert.equal(completions("add x"), null);
+  assert.equal(completions("passthrough o"), null, "已删掉的子命令不该还有补全");
 });
 
 // ---------------- describe_image 工具 ----------------
@@ -293,7 +314,7 @@ test("取消不算失败（不设 isError）", async () => {
   const ac = new AbortController();
   ac.abort();
   const real = join(HOME, "real.png");
-  const { generateTestPngBase64 } = await import("../src/test-image.ts");
+  const { generateTestPngBase64 } = await import("./test-image.ts");
   writeFileSync(real, Buffer.from(generateTestPngBase64(), "base64"));
   const r = await tool.execute("id", { path: real }, ac.signal, undefined, makeCtx().ctx);
   assert.notEqual(r.isError, true, "取消被当成了失败");

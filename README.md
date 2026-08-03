@@ -4,12 +4,11 @@
 
 ## 特性
 
-- 🔌 **零厂商硬编码**：不内置火山引擎 / 阶跃 / OpenAI 等任何厂商，全部由用户配置
-- 🌐 **兼容所有 OpenAI 格式端点**：火山 Ark、阶跃 StepFun、OpenAI、DeepSeek-VL、通义 Qwen-VL、Gemini（OpenAI 兼容代理）、OpenRouter、本地 vLLM / Ollama / llama.cpp……
+- 🔌 **零厂商硬编码**：不内置任何厂商，配一个模型只需 **API 地址 + API Key + 模型 ID** 三样
+- 🌐 **兼容所有 OpenAI 格式端点**：火山 Ark、阶跃 StepFun、OpenAI、通义 Qwen-VL、智谱 GLM、Gemini（OpenAI 兼容层）、OpenRouter、硅基流动、本地 vLLM / Ollama / llama.cpp……
 - 🧠 **能力感知透传**：主模型是多模态（如 Qwen-VL）时图片**原生直发主模型**、自动隐藏 `describe_image`，零额外 API 调用；主模型 text-only（如 DeepSeek）时自动启用代理——无需任何手动操作，切换模型即自动同步
-- 🎛️ **三种配置方式**：`/vision` 交互面板、`/vision <子命令>`、直接编辑配置文件
+- 🎛️ **命令只有 5 个**：`list` / `add` / `edit` / `remove` / `use`，或直接 `/vision` 开面板
 - 🔑 **API Key 安全**：支持 `$ENV_NAME` 引用环境变量，配置文件中不落明文
-- 🧪 **一键测试**：`/vision test` 用内置测试图验证任意模型的连通性
 - 🖼️ **两种传图方式**：本地文件路径 `path` / base64 `data`（兼容粘贴截图）
 
 ## 安装
@@ -57,7 +56,7 @@ pi install git:github.com/yourname/pi-vision-proxy
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `current` | 否 | 当前使用的模型名（不填则用第一个） |
-| `passthrough` | 否 | 透传模式，默认 `auto` |
+| `passthrough` | 否 | 透传模式，默认 `auto`。**无命令入口，只能手改本文件**（见下） |
 | `providers.<name>.baseUrl` | ✅ | OpenAI 兼容地址，自动补 `/chat/completions` |
 | `providers.<name>.apiKey` | 否 | 明文或 `$ENV_NAME`（默认 `Authorization: Bearer`） |
 | `providers.<name>.model` | ✅ | 模型 ID |
@@ -74,29 +73,37 @@ pi install git:github.com/yourname/pi-vision-proxy
 
 模式在**模型切换时自动同步**（`/model`、`Ctrl+P`、会话恢复），切换即生效并提示。多模态主模型下粘贴/拖拽的图片由 pi 原生发给模型，完全不影响正常使用。
 
-### 配置方式对比
-
-| 方式 | 命令 | 适用场景 |
-|------|------|----------|
-| 交互面板 | `/vision` | 可视化操作，一步步引导 |
-| 子命令 | `/vision add` 等 | 脚本化 / 快速操作 |
-| 编辑器 | `/vision config` | 批量修改、粘贴完整 JSON |
-| 直接编辑 | 改 `vision-config.json` | 熟悉结构后最快 |
+`auto` 覆盖绝大多数情况，所以**没有对应的子命令**。留这个字段是给 `auto` 判断失灵时的逃生阀（主模型元数据没标 `image`，或标了却调不通），手改配置文件即可强制。
 
 ## 命令
 
 | 命令 | 说明 |
 |------|------|
-| `/vision` | 打开设置面板（当前模型 + 操作菜单） |
-| `/vision add` | 交互式添加模型（名称 → baseUrl → apiKey → model） |
-| `/vision use [name]` | 切换当前视觉模型（无参数弹出选择列表） |
+| `/vision` | 打开面板：顶部铺出全部模型 + 当前状态，下方是操作菜单 |
+| `/vision list` | 列出所有已配置模型 |
+| `/vision add` | 添加模型（名称 → API 地址 → API Key → 模型 ID） |
 | `/vision edit [name]` | 编辑已有模型（逐字段提示当前值：**留空 = 不变**，apiKey 输入 `-` = 清除） |
 | `/vision remove [name]` | 删除模型（有确认） |
-| `/vision test [name]` | 用内置蓝色测试图验证连通性 |
-| `/vision passthrough [auto\|on\|off]` | 设置透传模式（无参数弹出选择） |
-| `/vision list` | 列出所有已配置模型 |
-| `/vision show` | 显示配置内容（apiKey 与疑似密钥的 header 已脱敏） |
-| `/vision config` | 用编辑器直接编辑 JSON（自动校验） |
+| `/vision use [name]` | 切换当前视觉模型（无参数弹出选择列表） |
+
+`edit` / `remove` / `use` 的 `[name]` 可省略，省略时弹出选择列表；带参数时支持 Tab 补全。
+
+面板长这样：
+
+```
+Vision 设置面板
+⚙️ 主模型 deepseek-chat 不支持视觉 → 由 describe_image 委托下面的模型识别
+
+📋 视觉模型 (2):
+  ● doubao  (doubao-seed-2-1-turbo-260628 @ https://ark.cn-beijing.volces.com/api/v3)
+    stepfun (step-3.7-flash @ https://api.stepfun.com/v1)
+
+  1. 切换当前模型 (use)
+  2. 添加模型 (add)
+  3. 编辑模型 (edit)
+  4. 删除模型 (remove)
+  0. 退出
+```
 
 ## LLM 使用（describe_image 工具）
 
@@ -137,15 +144,15 @@ describe_image(data: "data:image/png;base64,....", mimeType: "image/png")
 ```bash
 # 类型检查
 npm run typecheck
-# 单元测试（62 项，用本地假端点 + 隔离的 HOME，不发真实请求、不碰真实配置）
+# 单元测试（61 项，用本地假端点 + 隔离的 HOME，不发真实请求、不碰真实配置）
 npm test
 # 在 pi 里加载本地扩展试用
 pi -e ./extensions/index.ts
 ```
 
-测试分三块：`test/config.test.ts`（读写、校验、脱敏、原子写）、`test/vision.test.ts`（鉴权头、
+测试分三块：`test/config.test.ts`（读写、脱敏、原子写）、`test/vision.test.ts`（鉴权头、
 超时、响应形态、体积上限、类型嗅探）、`test/commands.test.ts`（用假 `ExtensionAPI` 驱动真实
-`/vision` 命令与 `describe_image` 工具）。
+`/vision` 命令与 `describe_image` 工具）。`test/test-image.ts` 是生成测试用 PNG 的夹具，不参与打包。
 
 ### 若干行为约定
 

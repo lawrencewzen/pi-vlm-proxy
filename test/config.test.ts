@@ -22,8 +22,6 @@ const {
   resolveApiKey,
   normalizeBaseUrl,
   maskSecret,
-  redactConfig,
-  validateConfig,
   validateProviderName,
 } = await import("../src/config.ts");
 
@@ -113,39 +111,8 @@ test("maskSecret 脱敏，但 $ENV 引用原样保留", () => {
   assert.equal(maskSecret(undefined), undefined);
 });
 
-test("redactConfig 处理 apiKey 与疑似密钥 header，普通 header 不动", () => {
-  const red = redactConfig({
-    providers: {
-      a: {
-        ...ok,
-        apiKey: "sk-abcdefghijklmn",
-        headers: { "x-api-key": "sk-abcdefghijklmn", Authorization: "Bearer sk-abcdefghijklmn", "x-plain": "keep" },
-      },
-    },
-  });
-  assert.equal(red.providers.a.apiKey, "sk-a…klmn");
-  assert.equal(red.providers.a.headers!["x-api-key"], "sk-a…klmn");
-  assert.equal(red.providers.a.headers!["Authorization"], "Bear…klmn");
-  assert.equal(red.providers.a.headers!["x-plain"], "keep");
-});
-
 test("validateProviderName 拒绝空和带空格", () => {
   assert.equal(validateProviderName("doubao"), undefined);
   assert.match(validateProviderName("  ") ?? "", /不能为空/);
   assert.match(validateProviderName("my model") ?? "", /空格/);
-});
-
-test("validateConfig 捕获各类非法配置", () => {
-  assert.deepEqual(validateConfig({ providers: { a: ok } }), []);
-  assert.deepEqual(validateConfig({ current: "a", passthrough: "on", providers: { a: ok } }), []);
-  assert.ok(validateConfig(null).length > 0);
-  assert.ok(validateConfig([]).length > 0);
-  assert.ok(validateConfig({ providers: [] }).length > 0);
-  assert.ok(validateConfig({ providers: { a: {} } }).some((e) => e.includes("baseUrl")));
-  assert.ok(validateConfig({ providers: { a: { baseUrl: "u" } } }).some((e) => e.includes("model")));
-  assert.ok(validateConfig({ providers: { a: { ...ok, maxTokens: 0 } } }).some((e) => e.includes("maxTokens")));
-  assert.ok(validateConfig({ providers: { a: { ...ok, headers: { x: 1 } } } }).some((e) => e.includes("headers")));
-  assert.ok(validateConfig({ passthrough: "yes", providers: {} }).some((e) => e.includes("passthrough")));
-  assert.ok(validateConfig({ current: "nope", providers: {} }).some((e) => e.includes("不存在")));
-  assert.ok(validateConfig({ providers: { "a b": ok } }).some((e) => e.includes("空格")));
 });

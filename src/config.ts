@@ -41,7 +41,8 @@ export interface VisionProviderConfig {
 export interface VisionConfig {
   current?: string;
   /**
-   * 透传模式：
+   * 透传模式。**没有对应的子命令，只能手改本文件** —— 日常不需要碰它，
+   * 留着是给 auto 判断失灵时（主模型元数据没标 image、或标了却调不通）的逃生阀。
    * - "auto"（默认）主模型多模态 → 图片原生透传，隐藏 describe_image；text-only → 启用代理
    * - "on"   强制透传（隐藏 describe_image）
    * - "off"  强制代理（总是显示 describe_image）
@@ -125,7 +126,7 @@ export function loadConfigResult(): LoadConfigResult {
         config,
         error:
           `配置中有 ${skipped.length} 个模型条目格式非法、已被忽略: ${skipped.join(", ")}\n` +
-          `每个模型至少需要 baseUrl 和 model 两个非空字符串。用 /vision config 检查`,
+          `每个模型至少需要 baseUrl 和 model 两个非空字符串。检查 ${CONFIG_PATH}`,
       };
     }
     return { config };
@@ -182,68 +183,6 @@ export function validateProviderName(name: string): string | undefined {
   return undefined;
 }
 
-/** 校验一份（可能来自手工编辑的）配置，返回人类可读的错误列表；空数组表示合法 */
-export function validateConfig(value: unknown): string[] {
-  const errors: string[] = [];
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return ["顶层必须是对象：{ current?, passthrough?, providers }"];
-  }
-  const cfg = value as Record<string, unknown>;
-
-  if (cfg.current !== undefined && typeof cfg.current !== "string") {
-    errors.push("current 必须是字符串");
-  }
-  if (cfg.passthrough !== undefined && !["auto", "on", "off"].includes(cfg.passthrough as string)) {
-    errors.push('passthrough 只能是 "auto" | "on" | "off"');
-  }
-
-  const providers = cfg.providers;
-  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
-    errors.push("providers 必须是对象：{ \"名字\": { baseUrl, model, ... } }");
-    return errors;
-  }
-
-  for (const [name, p] of Object.entries(providers as Record<string, unknown>)) {
-    const at = `providers["${name}"]`;
-    const nameErr = validateProviderName(name);
-    if (nameErr) errors.push(`${at}: ${nameErr}`);
-    if (!p || typeof p !== "object" || Array.isArray(p)) {
-      errors.push(`${at} 必须是对象`);
-      continue;
-    }
-    const pp = p as Record<string, unknown>;
-    if (typeof pp.baseUrl !== "string" || !pp.baseUrl.trim()) {
-      errors.push(`${at}.baseUrl 必须是非空字符串`);
-    }
-    if (typeof pp.model !== "string" || !pp.model.trim()) {
-      errors.push(`${at}.model 必须是非空字符串`);
-    }
-    if (pp.apiKey !== undefined && typeof pp.apiKey !== "string") {
-      errors.push(`${at}.apiKey 必须是字符串`);
-    }
-    if (
-      pp.maxTokens !== undefined &&
-      (typeof pp.maxTokens !== "number" || !Number.isFinite(pp.maxTokens) || pp.maxTokens <= 0)
-    ) {
-      errors.push(`${at}.maxTokens 必须是正数`);
-    }
-    if (pp.headers !== undefined) {
-      const h = pp.headers;
-      const ok =
-        !!h &&
-        typeof h === "object" &&
-        !Array.isArray(h) &&
-        Object.values(h as Record<string, unknown>).every((v) => typeof v === "string");
-      if (!ok) errors.push(`${at}.headers 必须是 string → string 的对象`);
-    }
-  }
-
-  if (typeof cfg.current === "string" && cfg.current && !(cfg.current in (providers as object))) {
-    errors.push(`current 指向不存在的模型「${cfg.current}」`);
-  }
-  return errors;
-}
-
 /** 当前启用的 provider 名（未配置返回 undefined） */
 export function getCurrentProviderName(cfg: VisionConfig): string | undefined {
   const name = cfg.current;
@@ -268,31 +207,6 @@ export function maskSecret(secret: string | undefined): string | undefined {
   if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) return trimmed;
   if (trimmed.length <= 8) return "********";
   return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
-}
-
-const SECRETISH_HEADER = /(authorization|api[-_]?key|token|secret)/i;
-
-/** 返回一份用于展示的配置副本，apiKey 与疑似密钥的 header 均已脱敏 */
-export function redactConfig(cfg: VisionConfig): VisionConfig {
-  return {
-    ...cfg,
-    providers: Object.fromEntries(
-      Object.entries(cfg.providers).map(([name, p]) => {
-        const provider = (p ?? {}) as VisionProviderConfig;
-        const redacted: VisionProviderConfig = { ...provider };
-        if (provider.apiKey !== undefined) redacted.apiKey = maskSecret(provider.apiKey);
-        if (provider.headers) {
-          redacted.headers = Object.fromEntries(
-            Object.entries(provider.headers).map(([k, v]) => [
-              k,
-              SECRETISH_HEADER.test(k) ? maskSecret(v) ?? v : v,
-            ])
-          );
-        }
-        return [name, redacted];
-      })
-    ),
-  };
 }
 
 /** 规范化 baseUrl：自动补 /chat/completions */

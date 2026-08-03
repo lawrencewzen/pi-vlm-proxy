@@ -4,10 +4,12 @@
  * 让非多模态模型（DeepSeek 等）通过 describe_image 工具，把图片识别
  * 委托给任意 OpenAI 兼容的多模态模型。零厂商硬编码，全部由用户配置。
  *
+ * 配置一个模型只需三样东西：API 地址、API Key、模型 ID。
+ *
  * 配置方式：
- *   1. /vision 交互面板
- *   2. /vision <subcommand> 子命令
- *   3. 直接编辑 ~/.pi/agent/vision-config.json（或 /vision config 用编辑器改）
+ *   1. /vision 交互面板（顶部铺出列表 + 增删改查菜单）
+ *   2. /vision list | add | edit | remove | use
+ *   3. 直接编辑 ~/.pi/agent/vision-config.json
  */
 
 import type {
@@ -25,8 +27,6 @@ import {
   getCurrentProviderName,
   listProviders,
   maskSecret,
-  redactConfig,
-  validateConfig,
   validateProviderName,
 } from "../src/config.ts";
 import {
@@ -37,7 +37,6 @@ import {
   VisionAbortError,
   type ImageSource,
 } from "../src/vision.ts";
-import { generateTestPngBase64 } from "../src/test-image.ts";
 
 export default function (pi: ExtensionAPI) {
   // ================================================================
@@ -49,20 +48,9 @@ export default function (pi: ExtensionAPI) {
 
   const TOOL_NAME = "describe_image";
 
-  const SUBCOMMANDS = [
-    "add",
-    "use",
-    "edit",
-    "remove",
-    "test",
-    "list",
-    "show",
-    "config",
-    "passthrough",
-  ];
+  const SUBCOMMANDS = ["list", "add", "edit", "remove", "use"];
   /** 第二个参数是模型名的子命令 */
-  const NAME_TAKING = new Set(["use", "edit", "remove", "test"]);
-  const PASSTHROUGH_MODES = ["auto", "on", "off"];
+  const NAME_TAKING = new Set(["edit", "remove", "use"]);
 
   function isMultimodal(model: AnyModel | undefined): boolean {
     return !!model && Array.isArray(model.input) && model.input.includes("image");
@@ -74,10 +62,6 @@ export default function (pi: ExtensionAPI) {
     if (setting === "on") return true;
     if (setting === "off") return false;
     return isMultimodal(model);
-  }
-
-  function modeLabel(passthrough: boolean): string {
-    return passthrough ? "透传（图片原生直发主模型）" : "代理（describe_image 委托视觉模型）";
   }
 
   /**
@@ -241,7 +225,7 @@ export default function (pi: ExtensionAPI) {
       baseUrl,
       ...(apiKey ? { apiKey } : {}),
       model,
-      // headers / maxTokens 没有向导入口，编辑时原样保留（要改走 /vision config）
+      // headers / maxTokens 没有向导入口，编辑时原样保留（要改直接编辑配置文件）
       ...(initial?.headers ? { headers: initial.headers } : {}),
       ...(initial?.maxTokens ? { maxTokens: initial.maxTokens } : {}),
     };
@@ -282,67 +266,6 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (sub === "show") {
-      // 脱敏后再展示：notify 的内容会进终端 scrollback
-      ctx.ui.notify(
-        `配置文件: ${CONFIG_PATH}\n（apiKey 已脱敏，完整值见文件或用 /vision config 编辑）\n\n` +
-          JSON.stringify(redactConfig(cfg), null, 2),
-        "info"
-      );
-      return;
-    }
-
-    if (sub === "passthrough") {
-      const mode =
-        arg ||
-        (
-          await ctx.ui.select("透传模式:", [
-            "auto - 自动（主模型多模态→透传，text-only→代理）",
-            "on   - 强制透传（始终隐藏 describe_image）",
-            "off  - 强制代理（始终使用 describe_image）",
-          ])
-        )?.split(" ")[0]?.trim();
-      if (!mode) return;
-      if (!["auto", "on", "off"].includes(mode)) {
-        ctx.ui.notify(`无效模式「${mode}」，可用: auto | on | off`, "error");
-        return;
-      }
-      const cfg2 = loadConfig();
-      cfg2.passthrough = mode as VisionConfig["passthrough"];
-      saveConfig(cfg2);
-      syncVisionMode(ctx.model);
-      ctx.ui.notify(
-        `透传模式已设为 ${mode} ✅ 当前状态: ${modeLabel(resolvePassthrough(cfg2, ctx.model))}`,
-        "info"
-      );
-      return;
-    }
-
-    if (sub === "config") {
-      // 用编辑器直接改 JSON，校验后保存
-      const edited = await ctx.ui.editor(
-        "编辑视觉配置 JSON（保存后自动校验）:",
-        JSON.stringify(cfg, null, 2)
-      );
-      if (!edited) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(edited);
-      } catch (err: any) {
-        ctx.ui.notify(`JSON 语法错误，未保存: ${err.message}`, "error");
-        return;
-      }
-      const errors = validateConfig(parsed);
-      if (errors.length > 0) {
-        ctx.ui.notify(`配置无效，未保存:\n  - ${errors.join("\n  - ")}`, "error");
-        return;
-      }
-      saveConfig(parsed as VisionConfig);
-      syncVisionMode(ctx.model);
-      ctx.ui.notify("配置已保存 ✅", "info");
-      return;
-    }
-
     if (sub === "add") {
       const result = await providerWizard(ctx, names);
       if (!result.ok) {
@@ -355,7 +278,7 @@ export default function (pi: ExtensionAPI) {
       if (!cfg2.current) cfg2.current = result.name;
       saveConfig(cfg2);
       ctx.ui.notify(
-        `${overwriting ? "已覆盖" : "已添加"}视觉模型「${result.name}」✅ 运行 /vision test ${result.name} 验证连通`,
+        `${overwriting ? "已覆盖" : "已添加"}视觉模型「${result.name}」(${result.provider.model}) ✅`,
         "info"
       );
       return;
@@ -424,64 +347,29 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (sub === "test") {
-      const found = requireProvider(cfg, arg);
-      if (!found) {
-        ctx.ui.notify(
-          names.length === 0
-            ? "尚未配置视觉模型，先运行 /vision add"
-            : `未找到模型「${arg}」，可用: ${names.join(", ")}`,
-          "warning"
-        );
-        return;
-      }
-      ctx.ui.notify(`正在用「${found.name}」测试识别（蓝色测试图）...`, "info");
-      try {
-        const result = await callVision(
-          found.provider,
-          { kind: "base64", data: generateTestPngBase64(), mimeType: "image/png", label: "test.png" },
-          "这张图片是什么颜色？用中文一句话回答。",
-          ctx.signal
-        );
-        ctx.ui.notify(`✅ 测试通过: ${result}`, "info");
-      } catch (err: any) {
-        if (err instanceof VisionAbortError) ctx.ui.notify("测试已取消", "info");
-        else ctx.ui.notify(`❌ 测试失败: ${err.message}`, "error");
-      }
-      return;
-    }
-
     if (sub && sub !== "") {
-      ctx.ui.notify(
-        `未知子命令「${sub}」，可用: add | use | edit | remove | test | list | show | config | passthrough`,
-        "error"
-      );
+      ctx.ui.notify(`未知子命令「${sub}」，可用: ${SUBCOMMANDS.join(" | ")}`, "error");
       return;
     }
 
     // ---------- 无参数：交互面板 ----------
     const current = getCurrentProviderName(cfg);
-    const passthrough = resolvePassthrough(cfg, ctx.model);
-    const passthroughLabel = {
-      auto: `auto (主模型${isMultimodal(ctx.model) ? "支持视觉" : "不支持视觉"})`,
-      on: "on (强制透传)",
-      off: "off (强制代理)",
-    }[(cfg.passthrough ?? "auto") as string];
+    // 透传状态只展示不可点：它由主模型能力自动决定，没有对应的操作项
+    const status = resolvePassthrough(cfg, ctx.model)
+      ? `⚙️ 主模型 ${ctx.model?.id ?? "?"} 支持视觉 → 图片直发主模型，${TOOL_NAME} 已隐藏`
+      : `⚙️ 主模型 ${ctx.model?.id ?? "?"} 不支持视觉 → 由 ${TOOL_NAME} 委托下面的模型识别`;
 
-    // 状态放进标题，避免出现「选中了却什么都不会发生」的菜单项
-    const title =
-      `Vision 设置面板\n` +
-      `📋 当前视觉模型: ${current ? describeProvider(current, cfg) : "(未配置)"}\n` +
-      `⚙️ 透传模式: ${passthroughLabel} → ${modeLabel(passthrough)}`;
+    // 列表直接铺在标题里，省掉一次「进列表再退出来」的往返
+    const list =
+      names.length > 0
+        ? names.map((n) => `  ${n === current ? "●" : " "} ${describeProvider(n, cfg)}`).join("\n")
+        : "  (未配置任何视觉模型)";
+
+    const title = `Vision 设置面板\n${status}\n\n📋 视觉模型 (${names.length}):\n${list}`;
     const menu = [
-      ...(names.length > 0 ? ["1. 切换模型 (use)"] : []),
+      ...(names.length > 0 ? ["1. 切换当前模型 (use)"] : []),
       "2. 添加模型 (add)",
-      ...(names.length > 0
-        ? ["3. 编辑模型 (edit)", "4. 删除模型 (remove)", "5. 测试连通 (test)"]
-        : []),
-      "6. 切换透传模式 (passthrough)",
-      "7. 查看配置 (show)",
-      "8. 编辑配置文件 (config)",
+      ...(names.length > 0 ? ["3. 编辑模型 (edit)", "4. 删除模型 (remove)"] : []),
       "0. 退出",
     ];
     const picked = await ctx.ui.select(title, menu);
@@ -494,10 +382,6 @@ export default function (pi: ExtensionAPI) {
       "2": "add",
       "3": "edit",
       "4": "remove",
-      "5": "test",
-      "6": "passthrough",
-      "7": "show",
-      "8": "config",
     };
     const subCmd = subMap[action];
     if (subCmd) {
@@ -506,8 +390,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("vision", {
-    description:
-      "视觉代理配置：面板 /vision，或子命令 add|use|edit|remove|test|list|show|config",
+    description: "视觉代理配置：面板 /vision，或子命令 list|add|edit|remove|use",
     // prefix 是 "/vision " 之后的**全部**文本，且补全项的 value 会整体替换它，
     // 所以第二段补全必须回填 "<子命令> <值>"，不能只回值
     getArgumentCompletions: (prefix) => {
@@ -522,16 +405,9 @@ export default function (pi: ExtensionAPI) {
         return items.length > 0 ? items : null;
       }
 
-      // 第二段：按子命令补它真正接受的值
+      // 第二段：只有接受模型名的子命令才补
       const sub = prefix.slice(0, spaceAt);
       const rest = prefix.slice(spaceAt + 1).trimStart();
-      if (sub === "passthrough") {
-        const items = PASSTHROUGH_MODES.filter((m) => m.startsWith(rest)).map((v) => ({
-          value: `${sub} ${v}`,
-          label: v,
-        }));
-        return items.length > 0 ? items : null;
-      }
       if (!NAME_TAKING.has(sub)) return null;
 
       const cfg = loadConfig();
@@ -599,7 +475,7 @@ export default function (pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: "未配置视觉模型。请运行 /vision add 添加（baseUrl + apiKey + model），或直接编辑 ~/.pi/agent/vision-config.json",
+                text: `未配置视觉模型。请运行 /vision add 添加（模型名 + API 地址 + API Key + 模型 ID），或直接编辑 ${CONFIG_PATH}`,
               },
             ],
             details: { error: "no provider configured" },
