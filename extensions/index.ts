@@ -225,9 +225,12 @@ export default function (pi: ExtensionAPI) {
       baseUrl,
       ...(apiKey ? { apiKey } : {}),
       model,
-      // headers / maxTokens 没有向导入口，编辑时原样保留（要改直接编辑配置文件）
+      // headers / maxTokens / compress / maxDimension / jpegQuality 没有向导入口，编辑时原样保留（要改直接编辑配置文件）
       ...(initial?.headers ? { headers: initial.headers } : {}),
       ...(initial?.maxTokens ? { maxTokens: initial.maxTokens } : {}),
+      ...(initial?.compress !== undefined ? { compress: initial.compress } : {}),
+      ...(initial?.maxDimension ? { maxDimension: initial.maxDimension } : {}),
+      ...(initial?.jpegQuality ? { jpegQuality: initial.jpegQuality } : {}),
     };
 
     return { ok: true, name: name.trim(), provider };
@@ -456,6 +459,13 @@ export default function (pi: ExtensionAPI) {
           description: "MIME 类型，如 image/png、image/jpeg。使用裸 base64 时建议提供，默认 image/png。",
         })
       ),
+      compress: Type.Optional(
+        Type.Boolean({
+          description:
+            "是否压缩图片后再发送（需安装 sharp）。true=缩小到最长边 1568px、去 alpha、转 JPEG，payload 约减 4x；" +
+            "false=原图直发，用于需要像素级精度的场景（坐标、小字、色值）。省略时用 provider 配置的 compress（默认 true）。",
+        })
+      ),
     }),
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -492,7 +502,8 @@ export default function (pi: ExtensionAPI) {
           found.provider,
           source,
           buildPrompt(looksLikeScreenshot(source)),
-          signal ?? ctx.signal
+          signal ?? ctx.signal,
+          params.compress
         );
         return {
           content: [{ type: "text", text: description }],

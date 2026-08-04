@@ -50,6 +50,30 @@ export type ImageSource =
   | { kind: "path"; path: string }
   | { kind: "base64"; data: string; mimeType: string; label?: string };
 
+/** 图片压缩选项（provider 配置 + 环境变量兜底） */
+export interface CompressOptions {
+  /** 是否压缩。默认 true（装了 sharp 才真正生效，否则自动退化原始字节） */
+  enabled: boolean;
+  /** 最长边像素上限，超出等比缩小 */
+  maxDimension: number;
+  /** JPEG 质量 1-100 */
+  jpegQuality: number;
+}
+
+const DEFAULT_MAX_DIMENSION = 1568;
+const DEFAULT_JPEG_QUALITY = 85;
+
+/** 从 provider 配置 + 环境变量解析压缩选项 */
+export function resolveCompressOptions(provider: VisionProviderConfig): CompressOptions {
+  const envDim = parseInt(process.env.PI_VISION_MAX_DIM ?? "", 10);
+  const envQ = parseInt(process.env.PI_VISION_JPEG_QUALITY ?? "", 10);
+  return {
+    enabled: provider.compress !== false,
+    maxDimension: provider.maxDimension ?? (envDim || DEFAULT_MAX_DIMENSION),
+    jpegQuality: provider.jpegQuality ?? (envQ || DEFAULT_JPEG_QUALITY),
+  };
+}
+
 /** 去掉 `data:image/...;base64,` 前缀；返回 { data, mimeType? } */
 export function parseBase64Input(raw: string, mimeHint?: string): { data: string; mimeType: string } {
   const trimmed = raw.trim();
@@ -98,7 +122,63 @@ function formatMB(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
-function loadImageBytes(source: ImageSource): { base64: string; mimeType: string; label: string } {
+/**
+ * 压缩图片：等比缩到 maxDimension 内、去 alpha、转 JPEG（GIF 保持原样）。
+ * sharp 未安装或处理失败时返回 null（调用方退化为原始字节）。
+ */
+async function optimizeImage(
+  buffer: Buffer,
+  originalMime: string,
+  opts: CompressOptions
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  let sharp: any;
+  try {
+    sharp = (await import("sharp")).default;
+  } catch {
+    return null; // sharp 未安装
+  }
+  try {
+    const metadata = await sharp(buffer).metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (width === 0 || height === 0) return null;
+
+    let pipeline = sharp(buffer);
+    // 超过最长边限制才缩放，避免小图重复编码
+    if (width > opts.maxDimension || height > opts.maxDimension) {
+      pipeline = pipeline.resize(opts.maxDimension, opts.maxDimension, {
+        fit: "inside",
+        withoutEnlargement: true,
+      });
+    }
+    // 去 alpha：视觉模型通常用不上，且 RGBA 转 RGB 能再省一点
+    if (metadata.hasAlpha || metadata.channels === 4) {
+      pipeline = pipeline.removeAlpha();
+    }
+    // 无损格式（PNG/WebP/BMP）转 JPEG；GIF 保持原样（sharp 重编码动图容易坏）
+    if (originalMime !== "image/gif") {
+      const out = await pipeline.jpeg({ quality: opts.jpegQuality }).toBuffer();
+      return { buffer: out, mimeType: "image/jpeg" };
+    }
+    const out = await pipeline.toBuffer();
+    return { buffer: out, mimeType: originalMime };
+  } catch {
+    return null; // 解码/编码失败，退化为原始字节
+  }
+}
+
+/**
+ * 读取图片为 base64；compress 开启且 sharp 可用时先压缩。
+ * 返回是否实际压缩过（false = sharp 不可用或原图更小）。
+ */
+async function loadImageBytes(
+  source: ImageSource,
+  compress: CompressOptions
+): Promise<{ base64: string; mimeType: string; label: string; compressed: boolean; origBytes: number; finalBytes: number }> {
+  let buffer: Buffer;
+  let mimeType: string;
+  let label: string;
+
   if (source.kind === "path") {
     const ext = extname(source.path).toLowerCase();
     if (!IMAGE_EXTS.has(ext)) throw new Error(`不支持的文件格式: ${ext || "(无扩展名)"}`);
@@ -117,27 +197,41 @@ function loadImageBytes(source: ImageSource): { base64: string; mimeType: string
       );
     }
 
-    const buffer = readFileSync(source.path);
+    buffer = readFileSync(source.path);
     // 扩展名可能骗人（.png 里装的是 JPEG），以文件头为准
-    const mimeType = sniffMime(buffer) || MIME_FROM_EXT[ext] || "image/png";
-    return { base64: buffer.toString("base64"), mimeType, label: basename(source.path) };
+    mimeType = sniffMime(buffer) || MIME_FROM_EXT[ext] || "image/png";
+    label = basename(source.path);
+  } else {
+    const mime = source.mimeType.toLowerCase();
+    if (!mime.startsWith("image/")) throw new Error(`不支持的 mimeType: ${source.mimeType}`);
+    if (source.data.length < 32) throw new Error("base64 数据过短，不像有效图片");
+    const approxBytes = Math.floor((source.data.length * 3) / 4);
+    if (approxBytes > MAX_IMAGE_BYTES) {
+      throw new Error(
+        `图片过大 (约 ${formatMB(approxBytes)})，上限 ${formatMB(MAX_IMAGE_BYTES)}。请先压缩后再识别。`
+      );
+    }
+    buffer = Buffer.from(source.data, "base64");
+    mimeType = mime === "image/jpg" ? "image/jpeg" : mime;
+    const ext = EXT_FROM_MIME[mime] || ".png";
+    label = source.label || `image${ext}`;
   }
 
-  const mime = source.mimeType.toLowerCase();
-  if (!mime.startsWith("image/")) throw new Error(`不支持的 mimeType: ${source.mimeType}`);
-  if (source.data.length < 32) throw new Error("base64 数据过短，不像有效图片");
-  const approxBytes = Math.floor((source.data.length * 3) / 4);
-  if (approxBytes > MAX_IMAGE_BYTES) {
-    throw new Error(
-      `图片过大 (约 ${formatMB(approxBytes)})，上限 ${formatMB(MAX_IMAGE_BYTES)}。请先压缩后再识别。`
-    );
+  const origBytes = buffer.length;
+  if (compress.enabled) {
+    const optimized = await optimizeImage(buffer, mimeType, compress);
+    if (optimized && optimized.buffer.length < buffer.length) {
+      return {
+        base64: optimized.buffer.toString("base64"),
+        mimeType: optimized.mimeType,
+        label,
+        compressed: true,
+        origBytes,
+        finalBytes: optimized.buffer.length,
+      };
+    }
   }
-  const ext = EXT_FROM_MIME[mime] || ".png";
-  return {
-    base64: source.data,
-    mimeType: mime === "image/jpg" ? "image/jpeg" : mime,
-    label: source.label || `image${ext}`,
-  };
+  return { base64: buffer.toString("base64"), mimeType, label, compressed: false, origBytes, finalBytes: buffer.length };
 }
 
 /** 组装请求头：仅当自定义 headers 里没有 authorization 时才补默认 Bearer */
@@ -258,15 +352,19 @@ function buildRequestBody(kind: "chat" | "responses", provider: VisionProviderCo
  * 调用任意 OpenAI 兼容的多模态端点识别图片（自动按 URL 判断 API 类型）
  * - 以 /responses 结尾 → Responses API（input + input_image/input_text）
  * - 其余 → Chat Completions API（messages + image_url/text）
+ * @param compressOverride 覆盖 provider 配置的 compress 开关；undefined = 用 provider 配置
  * @returns 视觉模型返回的文字描述
  */
 export async function callVision(
   provider: VisionProviderConfig,
   source: ImageSource,
   prompt: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  compressOverride?: boolean
 ): Promise<string> {
-  const { base64, mimeType, label } = loadImageBytes(source);
+  const compressOpts = resolveCompressOptions(provider);
+  if (compressOverride !== undefined) compressOpts.enabled = compressOverride;
+  const { base64, mimeType, label, compressed, origBytes, finalBytes } = await loadImageBytes(source, compressOpts);
   const url = normalizeBaseUrl(provider.baseUrl);
   const kind = detectApiKind(url);
   const imageUrl = `data:${mimeType};base64,${base64}`;
@@ -319,7 +417,7 @@ export async function callVision(
     : "";
 
   return (
-    `[${label}]\n${text}\n` +
+    `[${label}]${compressed ? ` (压缩 ${(origBytes / 1024).toFixed(0)}KB→${(finalBytes / 1024).toFixed(0)}KB)` : ""}\n${text}\n` +
     `[模型: ${provider.model}, tokens: ${data.usage?.total_tokens ?? "?"}]${truncationNote}`
   );
 }

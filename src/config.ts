@@ -37,6 +37,12 @@ export interface VisionProviderConfig {
   model: string;
   headers?: Record<string, string>;
   maxTokens?: number;
+  /** 是否压缩图片后再发送（需安装 sharp，未安装时自动退化原始字节）。默认 true */
+  compress?: boolean;
+  /** 压缩时最长边像素上限，超出则等比例缩小。默认 1568（可用环境变量 PI_VISION_MAX_DIM 覆盖） */
+  maxDimension?: number;
+  /** 压缩时 JPEG 质量 1-100。默认 85（可用环境变量 PI_VISION_JPEG_QUALITY 覆盖） */
+  jpegQuality?: number;
 }
 
 export interface VisionConfig {

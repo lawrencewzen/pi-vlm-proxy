@@ -226,6 +226,19 @@ test("真 PNG 正常识别为 image/png，label 用文件名", async () => {
   assert.match(out, /\[real\.png\]/);
 });
 
+test("压缩：sharp 未安装时退化原始字节，不报错", async () => {
+  // 测试环境不装 sharp，走 fallback：compress 请求与不压缩结果一致，且请求体仍是原格式
+  const real = join(HOME, "compress.png");
+  writeFileSync(real, Buffer.from(generateTestPngBase64(), "base64"));
+  await callVision({ baseUrl, model: "m" }, { kind: "path", path: real }, "p", undefined, true);
+  assert.match(lastBody.messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+});
+
+test("压缩：compress=false 时强制直发原始字节", async () => {
+  await callVision({ baseUrl, model: "m" }, png, "p", undefined, false);
+  assert.match(lastBody.messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+});
+
 test("截图启发式：粘贴的 base64 与带线索的文件名算截图，普通照片不算", () => {
   assert.equal(looksLikeScreenshot({ kind: "base64", data: "x", mimeType: "image/png" }), true);
   assert.equal(looksLikeScreenshot({ kind: "path", path: "/a/Screenshot 2026-01-01.png" }), true);

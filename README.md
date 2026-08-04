@@ -143,9 +143,29 @@ Vision 设置面板
 | `providers.<name>.apiKey` | | 明文或 `$ENV_NAME`，默认以 `Authorization: Bearer` 发送 |
 | `providers.<name>.headers` | | 额外请求头。只有同名 `Authorization` 才覆盖默认 Bearer，配其它头不影响鉴权 |
 | `providers.<name>.maxTokens` | | 输出上限，默认 4096 |
+| `providers.<name>.compress` | | 是否压缩图片后发送，默认 `true`（需安装 sharp，见下） |
+| `providers.<name>.maxDimension` | | 压缩时最长边像素上限，默认 1568 |
+| `providers.<name>.jpegQuality` | | 压缩时 JPEG 质量 1-100，默认 85 |
 
 > [!TIP]
 > `apiKey` 推荐写成 `$VOLC_ARK_KEY` 这种形式，真值放进 shell 的 `export`。这样截图、贴配置、录屏时露出来的只是个变量名。
+
+### 图片压缩（省 token）
+
+安装了可选依赖 `sharp` 后，图片在发送前会被自动压缩，**payload 通常能减 4 倍左右**，直接降低视觉模型的 input token 成本与延迟：
+
+```bash
+npm install sharp          # 装到扩展的 node_modules（pi install 的扩展目录）
+```
+
+压缩策略（与 pi-vision-tool 一致）：
+- 最长边超过 `maxDimension`（默认 1568px）时等比缩小
+- 去掉 alpha 通道（RGBA → RGB）
+- PNG / WebP / BMP 等无损格式转 JPEG（质量 `jpegQuality`，默认 85）；GIF 保持原样（动图重编码容易坏）
+
+未安装 `sharp` 时自动退化为**原始字节直发**，功能不受影响。参数可用环境变量覆盖：`PI_VISION_MAX_DIM`、`PI_VISION_JPEG_QUALITY`。
+
+调用方模型可在 `describe_image` 调用里用 `compress: false` 临时关掉压缩，用于需要像素级精度的场景（坐标、小字、色值）：
 
 ### API 类型自动判断
 
@@ -184,10 +204,12 @@ Vision 设置面板
 ```js
 describe_image(path: "/path/to/screenshot.png")
 describe_image(data: "data:image/png;base64,...", mimeType: "image/png")
+describe_image(path: "/tmp/architecture.png", compress: false)   // 像素级精度场景关闭压缩
 ```
 
 - **粘贴的截图** —— pi 会写入 `/tmp/pi-clipboard-*.png` 并插入路径文本，主模型拿着路径调用
 - **磁盘上的图** —— 直接把路径告诉主模型即可
+- **压缩** —— 装了 `sharp` 默认自动压缩省 token；需要精确坐标/小字/色值时传 `compress: false`
 
 ## 开发
 
