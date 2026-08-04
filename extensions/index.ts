@@ -204,8 +204,8 @@ export default function (pi: ExtensionAPI) {
 
     const baseUrl = await promptRequired(
       ctx,
-      "API 地址（OpenAI 兼容，自动补 /chat/completions）",
-      "https://api.example.com/v1",
+      "API 地址（完整路径，以 /responses 结尾走 Responses API，否则走 chat/completions）",
+      "https://api.example.com/v1/chat/completions",
       initial?.baseUrl
     );
     if (baseUrl === CANCELLED) return { ok: false };

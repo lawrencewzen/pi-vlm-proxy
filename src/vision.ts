@@ -11,6 +11,7 @@ import {
   type VisionProviderConfig,
   resolveApiKey,
   normalizeBaseUrl,
+  detectApiKind,
 } from "./config.ts";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
@@ -184,7 +185,79 @@ function extractText(message: any): string {
 }
 
 /**
- * 调用任意 OpenAI 兼容的多模态端点识别图片
+ * 从 Responses API 响应里取正文。
+ * 标准结构：output[] 中 type=="message" 的项，content[] 里取 text（output_text）。
+ * 部分兼容端点直接把正文放在顶层 output_text / content，一并兜底。
+ */
+function extractResponsesText(data: any): { text: string; truncated: boolean } {
+  if (!data || typeof data !== "object") return { text: "", truncated: false };
+
+  let text = "";
+  let truncated = false;
+  const output = Array.isArray(data.output) ? data.output : [];
+  for (const item of output) {
+    if (item && typeof item === "object" && item.type === "message" && Array.isArray(item.content)) {
+      for (const part of item.content) {
+        if (typeof part === "string") {
+          text += part;
+        } else if (part && typeof part.text === "string") {
+          text += part.text;
+        } else if (part && typeof part.output_text === "string") {
+          text += part.output_text;
+        }
+      }
+      if (item.status === "incomplete") truncated = true;
+    }
+  }
+
+  // 兜底：某些端点直接暴露 output_text 或顶层 content
+  if (!text.trim()) {
+    if (typeof data.output_text === "string") text = data.output_text;
+    else if (typeof data.content === "string") text = data.content;
+  }
+
+  return { text: text.trim(), truncated };
+}
+
+/**
+ * 组装请求体：
+ * - responses：input 数组 + input_image/input_text + max_output_tokens
+ * - chat：messages 数组 + image_url/text + max_tokens
+ */
+function buildRequestBody(kind: "chat" | "responses", provider: VisionProviderConfig, imageUrl: string, prompt: string) {
+  if (kind === "responses") {
+    return {
+      model: provider.model,
+      max_output_tokens: provider.maxTokens ?? 4096,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_image", image_url: imageUrl },
+            { type: "input_text", text: prompt },
+          ],
+        },
+      ],
+    };
+  }
+  return {
+    model: provider.model,
+    max_tokens: provider.maxTokens ?? 4096,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: imageUrl } },
+          { type: "text", text: prompt },
+        ],
+      },
+    ],
+  };
+}
+/**
+ * 调用任意 OpenAI 兼容的多模态端点识别图片（自动按 URL 判断 API 类型）
+ * - 以 /responses 结尾 → Responses API（input + input_image/input_text）
+ * - 其余 → Chat Completions API（messages + image_url/text）
  * @returns 视觉模型返回的文字描述
  */
 export async function callVision(
@@ -195,25 +268,15 @@ export async function callVision(
 ): Promise<string> {
   const { base64, mimeType, label } = loadImageBytes(source);
   const url = normalizeBaseUrl(provider.baseUrl);
+  const kind = detectApiKind(url);
+  const imageUrl = `data:${mimeType};base64,${base64}`;
 
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers: buildHeaders(provider),
-      body: JSON.stringify({
-        model: provider.model,
-        max_tokens: provider.maxTokens ?? 4096,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(buildRequestBody(kind, provider, imageUrl, prompt)),
       signal: withTimeout(signal, REQUEST_TIMEOUT_MS),
     });
   } catch (err: any) {
@@ -230,23 +293,34 @@ export async function callVision(
   }
 
   const data = (await response.json().catch(() => null)) as any;
-  const choice = data?.choices?.[0];
-  const text = extractText(choice?.message);
+  const maxTokens = provider.maxTokens ?? 4096;
+
+  let text: string;
+  let truncated = false;
+  if (kind === "responses") {
+    const extracted = extractResponsesText(data);
+    text = extracted.text;
+    truncated = extracted.truncated;
+  } else {
+    const choice = data?.choices?.[0];
+    text = extractText(choice?.message);
+    truncated =
+      choice?.finish_reason === "length" || choice?.finish_reason === "max_tokens";
+  }
+
   if (!text) {
     const hint = data?.error?.message ? `: ${String(data.error.message).slice(0, 200)}` : "";
     throw new Error(`API 未返回内容${hint}`);
   }
 
-  const maxTokens = provider.maxTokens ?? 4096;
   // 被 max_tokens 截断时必须说明，否则「描述不全」会被当成模型能力问题
-  const truncated =
-    choice?.finish_reason === "length" || choice?.finish_reason === "max_tokens"
-      ? `\n⚠️ 输出已被 maxTokens (${maxTokens}) 截断，以上描述可能不完整。可在配置里调大 maxTokens 后重试。`
-      : "";
+  const truncationNote = truncated
+    ? `\n⚠️ 输出已被 maxTokens (${maxTokens}) 截断，以上描述可能不完整。可在配置里调大 maxTokens 后重试。`
+    : "";
 
   return (
     `[${label}]\n${text}\n` +
-    `[模型: ${provider.model}, tokens: ${data.usage?.total_tokens ?? "?"}]${truncated}`
+    `[模型: ${provider.model}, tokens: ${data.usage?.total_tokens ?? "?"}]${truncationNote}`
   );
 }
 

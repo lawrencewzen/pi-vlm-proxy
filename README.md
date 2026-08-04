@@ -47,7 +47,7 @@ pi install npm:pi-vlm-proxy
 
 ```
 模型名称:   doubao                                      ← 自己起的代号
-API 地址:   https://ark.cn-beijing.volces.com/api/v3    ← 自动补 /chat/completions
+API 地址:   https://ark.cn-beijing.volces.com/api/v3/chat/completions   ← 完整路径，不自动补后缀
 API Key:    $ARK_API_KEY                                ← 支持环境变量引用
 模型 ID:    doubao-seed-2-1-turbo-260628
 ```
@@ -121,12 +121,12 @@ Vision 设置面板
   "current": "volcengine",
   "providers": {
     "volcengine": {
-      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       "apiKey": "$VOLC_ARK_KEY",
       "model": "doubao-seed-2-1-turbo-260628"
     },
     "stepfun": {
-      "baseUrl": "https://api.stepfun.ai/v1",
+      "baseUrl": "https://api.stepfun.ai/v1/chat/completions",
       "apiKey": "$STEPFUN_KEY",
       "model": "step-3.7-flash"
     }
@@ -138,7 +138,7 @@ Vision 设置面板
 |------|:---:|------|
 | `current` | | 当前使用的模型名，不填则用第一个 |
 | `passthrough` | | 透传模式，默认 `auto`（见下）。无命令入口，手改本文件 |
-| `providers.<name>.baseUrl` | ✅ | OpenAI 兼容地址，自动补 `/chat/completions` |
+| `providers.<name>.baseUrl` | ✅ | 完整 API 路径（不自动补后缀）。以 `/responses` 结尾 → Responses API；否则 → chat/completions |
 | `providers.<name>.model` | ✅ | 模型 ID |
 | `providers.<name>.apiKey` | | 明文或 `$ENV_NAME`，默认以 `Authorization: Bearer` 发送 |
 | `providers.<name>.headers` | | 额外请求头。只有同名 `Authorization` 才覆盖默认 Bearer，配其它头不影响鉴权 |
@@ -146,6 +146,24 @@ Vision 设置面板
 
 > [!TIP]
 > `apiKey` 推荐写成 `$VOLC_ARK_KEY` 这种形式，真值放进 shell 的 `export`。这样截图、贴配置、录屏时露出来的只是个变量名。
+
+### API 类型自动判断
+
+插件支持 **Chat Completions** 与 **Responses** 两种协议，按 `baseUrl` 自动判断、无需额外配置：
+
+| `baseUrl` 结尾 | 协议 | 请求体 |
+|---|---|---|
+| `/responses` | Responses API | `input` + `input_image`/`input_text`，`max_output_tokens` |
+| 其它（含 `/chat/completions`） | Chat Completions API | `messages` + `image_url`/`text`，`max_tokens` |
+
+例如同一中转的两种协议可以配成两个模型：
+
+```json
+{
+  "chat": { "baseUrl": "https://your-proxy/v1/chat/completions", "model": "..." },
+  "resp": { "baseUrl": "https://your-proxy/v1/responses", "model": "..." }
+}
+```
 
 ### 透传模式
 

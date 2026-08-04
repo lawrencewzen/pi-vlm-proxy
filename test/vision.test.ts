@@ -23,7 +23,7 @@ const {
 } = await import("../src/vision.ts");
 const { generateTestPngBase64 } = await import("./test-image.ts");
 
-type Mode = "string" | "array" | "reasoning" | "empty" | "truncated" | "error500" | "hang";
+type Mode = "string" | "array" | "reasoning" | "empty" | "truncated" | "error500" | "hang" | "resp";
 let mode: Mode = "string";
 let lastHeaders: Record<string, string> = {};
 let lastBody: any = null;
@@ -51,6 +51,13 @@ before(async () => {
         reasoning: { choices: [{ message: { content: "", reasoning_content: "推理字段正文" } }] },
         empty: { choices: [{ message: { content: "" } }], error: { message: "上游说没内容" } },
         truncated: { choices: [{ message: { content: "被截断的正文" }, finish_reason: "length" }] },
+        resp: {
+          output: [
+            { type: "reasoning", summary: [] },
+            { type: "message", status: "completed", content: [{ type: "output_text", text: "Responses 协议正文" }] },
+          ],
+          usage: { total_tokens: 7 },
+        },
       };
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payloads[mode]));
@@ -93,6 +100,28 @@ test("请求体形状：model / max_tokens / image_url + text", async () => {
   assert.equal(parts[0].type, "image_url");
   assert.match(parts[0].image_url.url, /^data:image\/png;base64,/);
   assert.equal(parts[1].text, "看看这个");
+});
+
+test("responses 协议：input + input_image/input_text + max_output_tokens", async () => {
+  mode = "resp";
+  const respBaseUrl = `http://127.0.0.1:${(server.address() as any).port}/v1/responses`;
+  await callVision({ baseUrl: respBaseUrl, model: "the-model", maxTokens: 123 }, png, "看看这个");
+  assert.equal(lastBody.model, "the-model");
+  assert.equal(lastBody.max_output_tokens, 123);
+  assert.equal(lastBody.max_tokens, undefined);
+  const parts = lastBody.input[0].content;
+  assert.equal(parts[0].type, "input_image");
+  assert.match(parts[0].image_url, /^data:image\/png;base64,/);
+  assert.equal(parts[1].type, "input_text");
+  assert.equal(parts[1].text, "看看这个");
+});
+
+test("responses 协议：从 output[].message.content 提取正文", async () => {
+  mode = "resp";
+  const respBaseUrl = `http://127.0.0.1:${(server.address() as any).port}/v1/responses`;
+  const out = await callVision({ baseUrl: respBaseUrl, model: "m" }, png, "p");
+  assert.match(out, /Responses 协议正文/);
+  assert.match(out, /tokens: 7/);
 });
 
 test("content 为字符串 / 数组分片 / 仅 reasoning_content 都能提取", async () => {
