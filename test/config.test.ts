@@ -21,6 +21,7 @@ const {
   listProviders,
   resolveApiKey,
   normalizeBaseUrl,
+  detectApiKind,
   maskSecret,
   validateProviderName,
 } = await import("../src/config.ts");
@@ -98,10 +99,19 @@ test("resolveApiKey 支持 $ENV_NAME", () => {
   assert.equal(resolveApiKey(undefined), undefined);
 });
 
-test("normalizeBaseUrl 自动补 /chat/completions 且不重复补", () => {
-  assert.equal(normalizeBaseUrl("https://x/v1"), "https://x/v1/chat/completions");
-  assert.equal(normalizeBaseUrl("https://x/v1///"), "https://x/v1/chat/completions");
+test("normalizeBaseUrl 不再补后缀，只去尾部斜杠", () => {
+  assert.equal(normalizeBaseUrl("https://x/v1/chat/completions"), "https://x/v1/chat/completions");
+  assert.equal(normalizeBaseUrl("https://x/v1/responses"), "https://x/v1/responses");
+  assert.equal(normalizeBaseUrl("https://x/v1///"), "https://x/v1");
   assert.equal(normalizeBaseUrl("  https://x/v1/chat/completions  "), "https://x/v1/chat/completions");
+});
+
+test("detectApiKind 按 URL 结尾判断协议", () => {
+  assert.equal(detectApiKind("https://x/v1/chat/completions"), "chat");
+  assert.equal(detectApiKind("https://x/v1/responses"), "responses");
+  assert.equal(detectApiKind("https://x/v1/responses/"), "responses");
+  assert.equal(detectApiKind("https://x/v1/responses?model=y"), "responses");
+  assert.equal(detectApiKind("https://x/zen/go/v1"), "chat");
 });
 
 test("maskSecret 脱敏，但 $ENV 引用原样保留", () => {

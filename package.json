@@ -51,6 +51,9 @@
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
+  "optionalDependencies": {
+    "sharp": "^0.35.0"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^26.1.2",

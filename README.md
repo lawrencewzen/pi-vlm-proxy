@@ -47,7 +47,7 @@ pi install npm:pi-vlm-proxy
 
 ```
 模型名称:   doubao                                      ← 自己起的代号
-API 地址:   https://ark.cn-beijing.volces.com/api/v3    ← 自动补 /chat/completions
+API 地址:   https://ark.cn-beijing.volces.com/api/v3/chat/completions   ← 完整路径，不自动补后缀
 API Key:    $ARK_API_KEY                                ← 支持环境变量引用
 模型 ID:    doubao-seed-2-1-turbo-260628
 ```
@@ -121,12 +121,12 @@ Vision 设置面板
   "current": "volcengine",
   "providers": {
     "volcengine": {
-      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       "apiKey": "$VOLC_ARK_KEY",
       "model": "doubao-seed-2-1-turbo-260628"
     },
     "stepfun": {
-      "baseUrl": "https://api.stepfun.ai/v1",
+      "baseUrl": "https://api.stepfun.ai/v1/chat/completions",
       "apiKey": "$STEPFUN_KEY",
       "model": "step-3.7-flash"
     }
@@ -138,14 +138,52 @@ Vision 设置面板
 |------|:---:|------|
 | `current` | | 当前使用的模型名，不填则用第一个 |
 | `passthrough` | | 透传模式，默认 `auto`（见下）。无命令入口，手改本文件 |
-| `providers.<name>.baseUrl` | ✅ | OpenAI 兼容地址，自动补 `/chat/completions` |
+| `providers.<name>.baseUrl` | ✅ | 完整 API 路径（不自动补后缀）。以 `/responses` 结尾 → Responses API；否则 → chat/completions |
 | `providers.<name>.model` | ✅ | 模型 ID |
 | `providers.<name>.apiKey` | | 明文或 `$ENV_NAME`，默认以 `Authorization: Bearer` 发送 |
 | `providers.<name>.headers` | | 额外请求头。只有同名 `Authorization` 才覆盖默认 Bearer，配其它头不影响鉴权 |
 | `providers.<name>.maxTokens` | | 输出上限，默认 4096 |
+| `providers.<name>.compress` | | 是否压缩图片后发送，默认 `true`（需安装 sharp，见下） |
+| `providers.<name>.maxDimension` | | 压缩时最长边像素上限，默认 1568 |
+| `providers.<name>.jpegQuality` | | 压缩时 JPEG 质量 1-100，默认 85 |
 
 > [!TIP]
 > `apiKey` 推荐写成 `$VOLC_ARK_KEY` 这种形式，真值放进 shell 的 `export`。这样截图、贴配置、录屏时露出来的只是个变量名。
+
+### 图片压缩（省 token）
+
+安装了可选依赖 `sharp` 后，图片在发送前会被自动压缩，**payload 通常能减 4 倍左右**，直接降低视觉模型的 input token 成本与延迟：
+
+```bash
+npm install sharp          # 装到扩展的 node_modules（pi install 的扩展目录）
+```
+
+压缩策略（与 pi-vision-tool 一致）：
+- 最长边超过 `maxDimension`（默认 1568px）时等比缩小
+- 去掉 alpha 通道（RGBA → RGB）
+- PNG / WebP / BMP 等无损格式转 JPEG（质量 `jpegQuality`，默认 85）；GIF 保持原样（动图重编码容易坏）
+
+未安装 `sharp` 时自动退化为**原始字节直发**，功能不受影响。参数可用环境变量覆盖：`PI_VISION_MAX_DIM`、`PI_VISION_JPEG_QUALITY`。
+
+调用方模型可在 `describe_image` 调用里用 `compress: false` 临时关掉压缩，用于需要像素级精度的场景（坐标、小字、色值）：
+
+### API 类型自动判断
+
+插件支持 **Chat Completions** 与 **Responses** 两种协议，按 `baseUrl` 自动判断、无需额外配置：
+
+| `baseUrl` 结尾 | 协议 | 请求体 |
+|---|---|---|
+| `/responses` | Responses API | `input` + `input_image`/`input_text`，`max_output_tokens` |
+| 其它（含 `/chat/completions`） | Chat Completions API | `messages` + `image_url`/`text`，`max_tokens` |
+
+例如同一中转的两种协议可以配成两个模型：
+
+```json
+{
+  "chat": { "baseUrl": "https://your-proxy/v1/chat/completions", "model": "..." },
+  "resp": { "baseUrl": "https://your-proxy/v1/responses", "model": "..." }
+}
+```
 
 ### 透传模式
 
@@ -166,10 +204,12 @@ Vision 设置面板
 ```js
 describe_image(path: "/path/to/screenshot.png")
 describe_image(data: "data:image/png;base64,...", mimeType: "image/png")
+describe_image(path: "/tmp/architecture.png", compress: false)   // 像素级精度场景关闭压缩
 ```
 
 - **粘贴的截图** —— pi 会写入 `/tmp/pi-clipboard-*.png` 并插入路径文本，主模型拿着路径调用
 - **磁盘上的图** —— 直接把路径告诉主模型即可
+- **压缩** —— 装了 `sharp` 默认自动压缩省 token；需要精确坐标/小字/色值时传 `compress: false`
 
 ## 开发
 

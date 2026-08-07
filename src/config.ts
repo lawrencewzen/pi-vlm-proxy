@@ -7,7 +7,8 @@
  *   "current": "my-model",                       // 当前使用的视觉模型名
  *   "providers": {
  *     "my-model": {                              // 任意名字，由用户自定义（不能含空格）
- *       "baseUrl": "https://api.example.com/v1", // OpenAI 兼容地址（自动补 /chat/completions）
+ *       "baseUrl": "https://api.example.com/v1/chat/completions", // 完整 API 路径（不再自动补后缀）
+ *       以 /responses 结尾 → 按 Responses API 交互；否则按 chat/completions 交互
  *       "apiKey": "$MY_API_KEY",                 // 支持 $ENV_NAME 引用环境变量，避免明文
  *       "model": "vision-model-name",            // 模型 ID
  *       "headers": { "x-custom": "..." },        // 可选：额外请求头（同名头会覆盖默认 Authorization）
@@ -36,6 +37,12 @@ export interface VisionProviderConfig {
   model: string;
   headers?: Record<string, string>;
   maxTokens?: number;
+  /** 是否压缩图片后再发送（需安装 sharp，未安装时自动退化原始字节）。默认 true */
+  compress?: boolean;
+  /** 压缩时最长边像素上限，超出则等比例缩小。默认 1568（可用环境变量 PI_VISION_MAX_DIM 覆盖） */
+  maxDimension?: number;
+  /** 压缩时 JPEG 质量 1-100。默认 85（可用环境变量 PI_VISION_JPEG_QUALITY 覆盖） */
+  jpegQuality?: number;
 }
 
 export interface VisionConfig {
@@ -209,13 +216,22 @@ export function maskSecret(secret: string | undefined): string | undefined {
   return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
 }
 
-/** 规范化 baseUrl：自动补 /chat/completions */
+/** 规范化 baseUrl：不再自动补后缀，直接使用用户提供的完整 API 路径 */
 export function normalizeBaseUrl(baseUrl: string): string {
-  let url = baseUrl.trim().replace(/\/+$/, "");
-  if (!/\/chat\/completions$/.test(url)) {
-    url += "/chat/completions";
-  }
-  return url;
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+/** 支持的 OpenAI 兼容 API 类型 */
+export type ApiKind = "chat" | "responses";
+
+/**
+ * 从完整 URL 判断 API 类型：
+ * 以 /responses 结尾 → Responses API（input + input_image/input_text，max_output_tokens）
+ * 其余（含 /chat/completions 与自定义路径）→ Chat Completions API（messages + image_url/text，max_tokens）
+ */
+export function detectApiKind(baseUrl: string): ApiKind {
+  const path = baseUrl.trim().split(/[?#]/)[0].replace(/\/+$/, "");
+  return /\/responses$/.test(path) ? "responses" : "chat";
 }
 
 /** 列出所有已配置的 provider 名 */
